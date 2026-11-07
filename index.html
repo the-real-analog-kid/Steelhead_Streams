@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Steelhead Alley Flows</title>
+
+<!-- Fonts: Barlow Condensed for river names and big numbers, Barlow for everything else.
+     If Google Fonts can't load (offline), the fallback stacks in --font-* take over. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+
+<style>
+/* =====================================================================
+   DESIGN TOKENS
+   Layout: 3×2 grid of gauge panels, west → east along the Lake Erie
+   shore; collapses to 2 columns on tablets and 1 column on phones.
+   Every color is a variable so light and dark mode stay in sync.
+   ===================================================================== */
+:root {
+  --bg: #eaf0f2;                       /* page background: cool lake grey */
+  --panel: #ffffff;                    /* card background */
+  --fg: #13232b;                       /* main text */
+  --muted: #5a6d76;                    /* secondary text, axis labels */
+  --grid: #dbe4e8;                     /* chart gridlines, card borders */
+  --line: #1d6585;                     /* flow line: river blue */
+  --fill: rgba(29, 101, 133, 0.14);    /* area under the flow line */
+  --accent: #c24a66;                   /* steelhead lateral stripe: marks "now" */
+  --band-fish: rgba(46, 140, 96, 0.08);  /* fishable range (lighter band) */
+  --band-prime: rgba(46, 140, 96, 0.20); /* sweet spot (darker band) */
+  --prime: #23704f;                    /* status: in the sweet spot */
+  --ok: #1d6585;                       /* status: fishable but not prime */
+  --warn: #a8620a;                     /* status: too low / too high */
+  --rise: #a8620a;                     /* trend: rising (usually muddying) */
+  --fall: #2c7a57;                     /* trend: falling (usually clearing) */
+  --steady: #5a6d76;                   /* trend: steady */
+  --err: #a8323e;                      /* error messages */
+  --font-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --font-body: "Barlow", "Segoe UI", system-ui, sans-serif;
+  color-scheme: light;
+}
+
+/* Dark mode, part 1: follow the operating system unless the page is forced light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d161b; --panel: #142129; --fg: #e2ebee; --muted: #8ba1ab; --grid: #22343e;
+    --line: #62b5d6; --fill: rgba(98, 181, 214, 0.16); --accent: #e47d95;
+    --band-fish: rgba(108, 195, 154, 0.08); --band-prime: rgba(108, 195, 154, 0.20);
+    --prime: #6cc39a; --ok: #62b5d6; --warn: #e3a650;
+    --rise: #e3a650; --fall: #6cc39a; --steady: #8ba1ab; --err: #ec7d86;
+    color-scheme: dark;
+  }
+}
+/* Dark mode, part 2: same values when dark is forced explicitly. */
+:root[data-theme="dark"] {
+  --bg: #0d161b; --panel: #142129; --fg: #e2ebee; --muted: #8ba1ab; --grid: #22343e;
+  --line: #62b5d6; --fill: rgba(98, 181, 214, 0.16); --accent: #e47d95;
+  --band-fish: rgba(108, 195, 154, 0.08); --band-prime: rgba(108, 195, 154, 0.20);
+  --prime: #6cc39a; --ok: #62b5d6; --warn: #e3a650;
+  --rise: #e3a650; --fall: #6cc39a; --steady: #8ba1ab; --err: #ec7d86;
+  color-scheme: dark;
+}
+
+/* =====================================================================
+   PAGE LAYOUT
+   ===================================================================== */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.45;
+  /* Side padding respects phone notches; never less than 16px. */
+  padding-block: max(20px, env(safe-area-inset-top, 0px)) max(28px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1280px; margin: 0 auto; display: grid; gap: 18px; }
+
+/* Header: title on the left, "updated" stamp and Refresh button on the right. */
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+.brand { display: grid; gap: 2px; }
+h1 {
+  font-family: var(--font-display); font-weight: 700; font-size: 2rem; line-height: 1;
+  margin: 0; letter-spacing: 0.01em; text-wrap: balance;
+}
+/* Small pink bar before the title, like a steelhead's side stripe. */
+h1 .stripe { display: inline-block; width: 0.9em; height: 0.18em; background: var(--accent); border-radius: 2px; vertical-align: 0.28em; margin-right: 0.35em; }
+.sub { color: var(--muted); font-size: 0.9rem; }
+.controls { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+button {
+  font: inherit; font-weight: 600; color: var(--fg); background: var(--panel);
+  border: 1px solid var(--grid); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--line); }
+button:focus-visible, input:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
+button[disabled] { opacity: 0.55; cursor: progress; }
+
+/* The 3×2 grid, with breakpoints for tablet (2 across) and phone (1 across). */
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 980px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* =====================================================================
+   GAUGE CARD
+   ===================================================================== */
+.card {
+  background: var(--panel); border: 1px solid var(--grid); border-radius: 10px;
+  padding: 14px 14px 10px; display: grid; gap: 6px; min-width: 0;
+}
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.name { font-family: var(--font-display); font-weight: 600; font-size: 1.3rem; line-height: 1.1; margin: 0; }
+.gauge { color: var(--muted); font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.gauge a { color: inherit; }
+
+/* Current reading row: big cfs number, status pill, trend arrow. */
+.reading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; font-variant-numeric: tabular-nums; }
+.cfs { font-family: var(--font-display); font-weight: 700; font-size: 2.4rem; line-height: 1; }
+.cfs small { font-size: 0.95rem; font-weight: 500; color: var(--muted); margin-left: 3px; }
+
+/* Status pill: color + words, so it reads without relying on color alone. */
+.status {
+  font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap;
+}
+.status:empty { display: none; }
+.status.prime { color: var(--prime); background: var(--band-prime); }
+.status.ok    { color: var(--ok); }
+.status.warn  { color: var(--warn); }
+
+.trend { font-weight: 600; font-size: 0.92rem; display: inline-flex; align-items: center; gap: 4px; }
+.trend.rising  { color: var(--rise); }
+.trend.falling { color: var(--fall); }
+.trend.steady  { color: var(--steady); }
+.meta { color: var(--muted); font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+
+/* Chart area and placeholder messages share the same height so cards don't jump. */
+.chart { width: 100%; height: 150px; display: block; }
+.chart text { font-family: var(--font-body); font-size: 10.5px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.msg { min-height: 150px; display: grid; place-items: center; text-align: center; color: var(--muted); font-size: 0.9rem; padding: 0 12px; }
+.msg.err { color: var(--err); }
+
+/* =====================================================================
+   LEGEND, SETTINGS, FOOTER
+   ===================================================================== */
+.legend { display: grid; gap: 6px; color: var(--muted); font-size: 0.84rem; }
+.legend-row { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
+.legend b { font-weight: 600; }
+.legend .r { color: var(--rise); } .legend .f { color: var(--fall); }
+.swatch { display: inline-block; width: 14px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; border: 1px solid var(--grid); }
+.swatch.prime { background: var(--band-prime); }
+.swatch.fish  { background: var(--band-fish); }
+
+/* Ranges table inside the settings panel. */
+details { color: var(--muted); font-size: 0.85rem; }
+summary { cursor: pointer; }
+.table-scroll { overflow-x: auto; margin-top: 8px; }
+table { border-collapse: collapse; font-variant-numeric: tabular-nums; min-width: 420px; }
+th, td { text-align: left; padding: 4px 12px 4px 0; border-bottom: 1px solid var(--grid); }
+th { font-weight: 600; color: var(--fg); }
+.keyrow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: center; }
+.keyrow input { font: inherit; padding: 6px 8px; border: 1px solid var(--grid); border-radius: 6px; background: var(--panel); color: var(--fg); min-width: 0; flex: 1 1 260px; max-width: 420px; }
+footer { color: var(--muted); font-size: 0.78rem; }
+footer a { color: inherit; }
+@media (prefers-reduced-motion: no-preference) { .card { transition: border-color .2s; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1><span class="stripe" aria-hidden="true"></span>Steelhead Alley Flows</h1>
+      <div class="sub">Discharge, last 72 hours · west to east along the Lake Erie shore</div>
+    </div>
+    <div class="controls">
+      <span id="stamp">Loading…</span>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <!-- The six gauge cards are built by the script below. -->
+  <main class="grid" id="grid" aria-live="polite"></main>
+
+  <div class="legend">
+    <div class="legend-row">
+      <span><span class="swatch prime"></span>Sweet spot</span>
+      <span><span class="swatch fish"></span>Fishable</span>
+      <span>Ranges are starting estimates from local reports. Tune them in the script's STREAMS list.</span>
+    </div>
+    <div class="legend-row">
+      <span><b class="r">▲ Rising</b> more than 5% over the last 3 hours</span>
+      <span><b class="f">▼ Falling</b> more than 5% over the last 3 hours</span>
+      <span><b>▬ Steady</b> within ±5%</span>
+    </div>
+  </div>
+
+  <details>
+    <summary>Flow ranges in use</summary>
+    <div class="table-scroll"><table id="ranges"></table></div>
+  </details>
+
+  <details>
+    <summary>USGS API key (optional)</summary>
+    <p>Without a key, USGS allows a limited number of requests per hour from your network. Each refresh uses six. If you ever see a rate-limit message, get a free key at <a href="https://api.waterdata.usgs.gov/signup/" target="_blank" rel="noopener">api.waterdata.usgs.gov/signup</a> and paste it here. It's saved in this browser only.</p>
+    <div class="keyrow">
+      <input id="apikey" type="text" autocomplete="off" spellcheck="false" placeholder="Paste API key">
+      <button id="savekey" type="button">Save key</button>
+      <span id="keystatus"></span>
+    </div>
+  </details>
+
+  <footer>Data: USGS Water Data for the Nation (provisional, subject to revision). Fetched live from api.waterdata.usgs.gov when the page loads and every 15 minutes while it's open.</footer>
+</div>
+
+<script>
+/* =======================================================================
+   CONFIGURATION — the part you'll edit.
+   One entry per river, in the order they appear (west → east).
+     name / where : labels on the card
+     id           : USGS gauge number (site number without the "USGS-" prefix)
+     fishable     : [min, max] cfs where the river is fishable at all
+     prime        : [low, high] cfs sweet spot
+   Set fishable or prime to null to hide that band for a river.
+   ======================================================================= */
+const STREAMS = [
+  { name: "Vermilion River", where: "near Vermilion",   id: "04199500", fishable: [50, 400],   prime: [100, 250] },
+  { name: "Rocky River",     where: "near Berea",       id: "04201500", fishable: [100, 450],  prime: [150, 300] },
+  { name: "Cuyahoga River",  where: "at Independence",  id: "04208000", fishable: [150, 450],  prime: [200, 350] },
+  { name: "Chagrin River",   where: "at Willoughby",    id: "04209000", fishable: [120, 550],  prime: [200, 400] },
+  { name: "Grand River",     where: "near Painesville", id: "04212100", fishable: [200, 1000], prime: [300, 750] },
+  { name: "Conneaut Creek",  where: "at Conneaut",      id: "04213000", fishable: [120, 500],  prime: [200, 400] },
+];
+
+// USGS "continuous values" endpoint (15-minute sensor readings), API version 1.
+const API = "https://api.waterdata.usgs.gov/ogcapi/v1/collections/continuous/items";
+const HOURS = 72;                       // how far back each chart looks
+const TREND_HOURS = 3;                  // trend compares now vs this many hours ago
+const TREND_THRESHOLD = 5;              // percent change that counts as rising/falling
+const REFRESH_MS = 15 * 60 * 1000;      // auto-refresh every 15 minutes
+const GAP_MS = 2 * 3600e3;              // break the line where readings stop for 2+ hours
+const NS = "http://www.w3.org/2000/svg";
+
+/* =======================================================================
+   SMALL HELPERS
+   ======================================================================= */
+
+// Page elements we update repeatedly.
+const grid = document.getElementById("grid");
+const stamp = document.getElementById("stamp");
+const refreshBtn = document.getElementById("refresh");
+
+// Browser storage (only used for the optional API key). Wrapped in try/catch
+// because some browsers block storage for local files or private windows.
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); return true; } catch (e) { return false; } },
+};
+
+let lastLoaded = null;          // when the last full refresh finished
+const results = new Map();      // gauge id → { pts, iced } or { error }
+
+// Format a cfs value: commas over 1,000, whole numbers over 10, one decimal below.
+function fmt(v) {
+  if (v >= 1000) return Math.round(v).toLocaleString();
+  if (v >= 10) return String(Math.round(v));
+  return v.toFixed(1);
+}
+
+// Pick "round" y-axis tick values (e.g. 0, 100, 200…) spanning lo..hi,
+// aiming for about n intervals.
+function niceTicks(lo, hi, n) {
+  const span = hi - lo || Math.max(1, hi);
+  const raw = span / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || 10 * mag;
+  const t0 = Math.floor(lo / step) * step;
+  const t1 = Math.ceil(hi / step) * step;
+  const ticks = [];
+  for (let t = t0; t <= t1 + step / 2; t += step) ticks.push(+t.toFixed(6));
+  return ticks;
+}
+
+// Create an SVG element with attributes and (optionally) append it to a parent.
+function el(tag, attrs, parent) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+/* =======================================================================
+   BUILD THE PAGE SKELETON (runs once)
+   ======================================================================= */
+
+// One card per river. The data is filled in later by render().
+for (const s of STREAMS) {
+  const card = document.createElement("section");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="card-head">
+      <h2 class="name"></h2>
+      <span class="gauge"><a target="_blank" rel="noopener"></a></span>
+    </div>
+    <div class="reading"><span class="cfs">—</span><span class="status"></span><span class="trend"></span></div>
+    <div class="meta"></div>
+    <div class="plot"><div class="msg">Loading…</div></div>`;
+  card.querySelector(".name").textContent = s.name;
+  const a = card.querySelector(".gauge a");
+  a.textContent = s.where + " · " + s.id;
+  a.href = "https://waterdata.usgs.gov/monitoring-location/USGS-" + s.id + "/";   // USGS gauge page
+  s.el = card;                                                                       // keep a handle for render()
+  grid.appendChild(card);
+}
+
+// Fill the "Flow ranges in use" table from STREAMS, so it always matches the config.
+(function buildRangesTable() {
+  const t = document.getElementById("ranges");
+  const r = x => (x ? `${fmt(x[0])}–${fmt(x[1])}` : "—");
+  t.innerHTML = "<thead><tr><th>River</th><th>Fishable (cfs)</th><th>Sweet spot (cfs)</th></tr></thead>";
+  const body = document.createElement("tbody");
+  for (const s of STREAMS) {
+    const tr = document.createElement("tr");
+    for (const cell of [s.name, r(s.fishable), r(s.prime)]) {
+      const td = document.createElement("td");
+      td.textContent = cell;
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+  t.appendChild(body);
+})();
+
+/* =======================================================================
+   DATA: fetch 72 hours of discharge for one gauge
+   ======================================================================= */
+
+// Build the request URL. Parameter code 00060 = discharge in cubic feet per second.
+// time=PT72H asks for "the last 72 hours". properties trims the response to what we use.
+function buildUrl(id) {
+  const p = new URLSearchParams({
+    f: "json",
+    monitoring_location_id: "USGS-" + id,
+    parameter_code: "00060",
+    time: "PT" + HOURS + "H",
+    properties: "time,value,qualifier",
+    skipGeometry: "true",
+    limit: "2000",                      // 72 h × 4 readings/h = 288, so 2000 is plenty
+  });
+  const key = store.get("usgsKey");
+  if (key) p.set("api_key", key);       // optional key raises the hourly request limit
+  return API + "?" + p.toString();
+}
+
+// Download and clean one gauge's readings. Returns { pts: [{t, v}], iced }.
+// Throws an Error with a readable message if anything goes wrong.
+async function fetchSeries(id) {
+  let res;
+  try {
+    res = await fetch(buildUrl(id), { headers: { Accept: "application/geo+json, application/json" } });
+  } catch (e) {
+    throw new Error("Couldn't reach USGS. Check your connection, then tap Refresh.");
+  }
+  if (res.status === 429) throw new Error("USGS rate limit reached. Wait a bit, or add a free API key below.");
+  if (!res.ok) throw new Error("USGS returned an error (" + res.status + "). Try Refresh in a few minutes.");
+
+  // The response is GeoJSON: each reading is a "feature" with properties.time and properties.value.
+  // Values arrive as strings (USGS does this to preserve precision), so convert to numbers.
+  const body = await res.json();
+  const feats = Array.isArray(body.features) ? body.features : [];
+  const pts = [];
+  let iced = false;
+  for (const f of feats) {
+    const p = f.properties || {};
+    const v = parseFloat(p.value);
+    const t = new Date(p.time);
+    if (p.qualifier && /ice/i.test(String(p.qualifier))) iced = true;   // USGS flags ice-affected readings
+    if (Number.isFinite(v) && !isNaN(t)) pts.push({ t, v });
+  }
+  pts.sort((a, b) => a.t - b.t);        // oldest → newest
+  return { pts, iced };
+}
+
+/* =======================================================================
+   ANALYSIS: trend and fishability
+   ======================================================================= */
+
+// Compare the latest reading with the one closest to TREND_HOURS earlier.
+// Returns { dir: "rising" | "falling" | "steady", pct } or null if not enough data.
+function trendOf(pts) {
+  const last = pts[pts.length - 1];
+  const target = last.t.getTime() - TREND_HOURS * 3600e3;
+  let ref = null;
+  for (const p of pts) { if (p.t.getTime() <= target) ref = p; else break; }
+  if (!ref || ref.v <= 0) return null;
+  const pct = (last.v - ref.v) / ref.v * 100;
+  const dir = pct >= TREND_THRESHOLD ? "rising" : pct <= -TREND_THRESHOLD ? "falling" : "steady";
+  return { dir, pct };
+}
+
+// Classify a flow against the river's ranges.
+// Returns { label, cls } for the status pill, or null if no ranges are set.
+function statusOf(v, s) {
+  const f = s.fishable, p = s.prime;
+  if (f && v < f[0]) return { label: "Too low", cls: "warn" };
+  if (f && v > f[1]) return { label: "Too high", cls: "warn" };
+  if (p && v >= p[0] && v <= p[1]) return { label: "Prime", cls: "prime" };
+  if (p && v < p[0]) return { label: "Low · fishable", cls: "ok" };
+  if (p && v > p[1]) return { label: "High · fishable", cls: "ok" };
+  if (f) return { label: "Fishable", cls: "ok" };
+  return null;
+}
+
+/* =======================================================================
+   CHART: draw one river's 72-hour flow as an SVG
+   ======================================================================= */
+function drawChart(container, pts, s) {
+  // Size the drawing to the card's actual width so text never stretches.
+  const W = Math.max(240, Math.floor(container.clientWidth));
+  const H = 150;
+  const m = { l: 40, r: 10, t: 8, b: 20 };   // margins for axis labels
+
+  // X axis: always the last 72 hours ending now.
+  const now = Date.now();
+  const x0 = now - HOURS * 3600e3, x1 = now;
+
+  // Y axis: fit the data, and stretch just far enough to show the nearest
+  // edge of the fishable range. That way a low river still shows how far
+  // below "fishable" it is, without a 1,000 cfs band squashing a 90 cfs creek.
+  const vals = pts.map(p => p.v);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (s.fishable) {
+    if (hi < s.fishable[0]) hi = s.fishable[0];
+    if (lo > s.fishable[1]) lo = s.fishable[1];
+  }
+  const pad = (hi - lo) * 0.12 || hi * 0.1 || 1;
+  const ticks = niceTicks(Math.max(0, lo - pad), hi + pad, 4);
+  const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+
+  // Scale functions: time → x pixel, cfs → y pixel.
+  const sx = t => m.l + (t - x0) / (x1 - x0) * (W - m.l - m.r);
+  const sy = v => H - m.b - (v - y0) / (y1 - y0 || 1) * (H - m.t - m.b);
+  const clampY = v => Math.min(Math.max(v, y0), y1);   // keep bands inside the plot
+
+  const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img" });
+  const last = pts[pts.length - 1];
+  svg.setAttribute("aria-label",
+    `Flow over 72 hours, ranging ${fmt(Math.min(...vals))} to ${fmt(Math.max(...vals))} cfs, now ${fmt(last.v)} cfs`);
+
+  // 1. Background bands: fishable range (light), then sweet spot (darker) on top.
+  const band = (range, fill) => {
+    if (!range) return;
+    const top = sy(clampY(range[1])), bot = sy(clampY(range[0]));
+    if (bot - top > 0.5) el("rect", { x: m.l, y: top, width: W - m.l - m.r, height: bot - top, fill }, svg);
+  };
+  band(s.fishable, "var(--band-fish)");
+  band(s.prime, "var(--band-prime)");
+
+  // 2. Horizontal gridlines with cfs labels on the left.
+  for (const t of ticks) {
+    const y = sy(t);
+    el("line", { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    const lab = el("text", { x: m.l - 6, y: y + 3.5, "text-anchor": "end" }, svg);
+    lab.textContent = fmt(t);
+  }
+
+  // 3. Dashed vertical line at each local midnight, labeled with the new day.
+  const d = new Date(x0); d.setHours(24, 0, 0, 0);
+  for (; d.getTime() < x1; d.setDate(d.getDate() + 1)) {
+    const x = sx(d.getTime());
+    el("line", { x1: x, x2: x, y1: m.t, y2: H - m.b, stroke: "var(--grid)", "stroke-width": 1, "stroke-dasharray": "2 3" }, svg);
+    const lab = el("text", { x: x + 3, y: H - 6 }, svg);
+    lab.textContent = d.toLocaleDateString(undefined, { weekday: "short" });
+  }
+
+  // 4. The flow itself: shaded area plus a line. Split into segments wherever
+  //    the gauge stopped reporting for 2+ hours, so gaps show as gaps.
+  const segs = [];
+  let cur = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (i && pts[i].t - pts[i - 1].t > GAP_MS) { segs.push(cur); cur = []; }
+    cur.push(pts[i]);
+  }
+  segs.push(cur);
+  for (const seg of segs) {
+    if (!seg.length) continue;
+    const line = seg.map((p, i) => (i ? "L" : "M") + sx(p.t).toFixed(1) + "," + sy(p.v).toFixed(1)).join("");
+    const area = line + `L${sx(seg[seg.length - 1].t).toFixed(1)},${H - m.b}L${sx(seg[0].t).toFixed(1)},${H - m.b}Z`;
+    el("path", { d: area, fill: "var(--fill)" }, svg);
+    el("path", { d: line, fill: "none", stroke: "var(--line)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  }
+
+  // 5. Pink dot on the latest reading.
+  el("circle", { cx: sx(last.t), cy: sy(last.v), r: 4, fill: "var(--accent)", stroke: "var(--panel)", "stroke-width": 2 }, svg);
+
+  container.replaceChildren(svg);
+}
+
+/* =======================================================================
+   RENDER: fill one card from its fetched data
+   ======================================================================= */
+function render(s) {
+  const r = results.get(s.id);
+  if (!r) return;                                  // not loaded yet
+  const card = s.el;
+  const plot = card.querySelector(".plot");
+  const cfs = card.querySelector(".cfs");
+  const status = card.querySelector(".status");
+  const trend = card.querySelector(".trend");
+  const meta = card.querySelector(".meta");
+
+  // Clears the reading row when there's nothing to show.
+  const blank = () => { cfs.textContent = "—"; status.textContent = ""; trend.textContent = ""; meta.textContent = ""; };
+
+  // Case 1: the request failed.
+  if (r.error) {
+    blank();
+    plot.innerHTML = `<div class="msg err"></div>`;
+    plot.firstChild.textContent = r.error;
+    return;
+  }
+
+  // Case 2: request worked but the gauge sent no readings.
+  const { pts, iced } = r;
+  if (!pts.length) {
+    blank();
+    plot.innerHTML = `<div class="msg">No discharge readings in the last 72 hours. The gauge may be offline or ice-affected.</div>`;
+    return;
+  }
+
+  // Case 3: normal. Big number, status pill, trend, summary line, chart.
+  const last = pts[pts.length - 1];
+  cfs.innerHTML = fmt(last.v) + "<small>cfs</small>";
+
+  const st = statusOf(last.v, s);
+  status.className = "status" + (st ? " " + st.cls : "");
+  status.textContent = st ? st.label : "";
+
+  const tr = trendOf(pts);
+  trend.className = "trend" + (tr ? " " + tr.dir : "");
+  if (tr) {
+    const arrow = tr.dir === "rising" ? "▲" : tr.dir === "falling" ? "▼" : "▬";
+    const label = tr.dir[0].toUpperCase() + tr.dir.slice(1);
+    trend.textContent = `${arrow} ${label} ${tr.pct >= 0 ? "+" : ""}${tr.pct.toFixed(0)}% / ${TREND_HOURS} h`;
+  } else {
+    trend.textContent = "";
+  }
+
+  // Summary: 72-hour low/high, how stale the last reading is, ice flag.
+  const vals = pts.map(p => p.v);
+  const age = Math.round((Date.now() - last.t) / 60000);
+  const ageTxt = age < 90 ? age + " min ago" : Math.round(age / 60) + " h ago";
+  meta.textContent = `72 h range ${fmt(Math.min(...vals))}–${fmt(Math.max(...vals))} cfs · reading ${ageTxt}${iced ? " · ice-affected" : ""}`;
+
+  drawChart(plot, pts, s);
+}
+
+/* =======================================================================
+   REFRESH CYCLE
+   ======================================================================= */
+
+// Fetch all six gauges in parallel; each card renders as soon as its data arrives.
+async function loadAll() {
+  refreshBtn.disabled = true;
+  stamp.textContent = "Updating…";
+  await Promise.all(STREAMS.map(async s => {
+    try { results.set(s.id, await fetchSeries(s.id)); }
+    catch (e) { results.set(s.id, { error: e.message }); }
+    render(s);
+  }));
+  lastLoaded = new Date();
+  refreshBtn.disabled = false;
+  updateStamp();
+}
+
+// "Updated 4 min ago (9:12 PM)" in the header.
+function updateStamp() {
+  if (!lastLoaded) return;
+  const mins = Math.floor((Date.now() - lastLoaded) / 60000);
+  stamp.textContent = "Updated " + (mins < 1 ? "just now" : mins + " min ago") +
+    " (" + lastLoaded.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ")";
+}
+
+refreshBtn.addEventListener("click", loadAll);
+setInterval(updateStamp, 30000);                         // keep the "min ago" text current
+
+// Auto-refresh only while the tab is visible, to save requests.
+setInterval(() => { if (document.visibilityState === "visible") loadAll(); }, REFRESH_MS);
+
+// Coming back to a tab that's been in the background a while? Refresh right away.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && lastLoaded && Date.now() - lastLoaded > REFRESH_MS) loadAll();
+});
+
+// Redraw charts at the new width when the window is resized (debounced).
+let rt;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => STREAMS.forEach(render), 150); });
+
+/* =======================================================================
+   OPTIONAL API KEY
+   ======================================================================= */
+const keyInput = document.getElementById("apikey");
+const keyStatus = document.getElementById("keystatus");
+keyInput.value = store.get("usgsKey") || "";
+document.getElementById("savekey").addEventListener("click", () => {
+  const v = keyInput.value.trim();
+  keyStatus.textContent = store.set("usgsKey", v) ? (v ? "Saved." : "Key removed.") : "This browser won't save it.";
+  if (v) loadAll();
+});
+
+// Go.
+loadAll();
+</script>
+</body>
+</html>
